@@ -5,17 +5,81 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#include <charconv>
+#include <tuple>
+#include <type_traits>
 
 #include "types.hpp"
 
 namespace stdx::details {
 
-// здесь ваш код
+template <typename T>
+constexpr bool is_supported_type_v = 
+    std::is_same_v<std::remove_cv_t<T>, int8_t> ||
+    std::is_same_v<std::remove_cv_t<T>, int16_t> ||
+    std::is_same_v<std::remove_cv_t<T>, int32_t> ||
+    std::is_same_v<std::remove_cv_t<T>, int64_t> ||
+    std::is_same_v<std::remove_cv_t<T>, uint8_t> ||
+    std::is_same_v<std::remove_cv_t<T>, uint16_t> ||
+    std::is_same_v<std::remove_cv_t<T>, uint32_t> ||
+    std::is_same_v<std::remove_cv_t<T>, uint64_t> ||
+    std::is_same_v<std::remove_cv_t<T>, float> ||
+    std::is_same_v<std::remove_cv_t<T>, double> ||
+    std::is_same_v<std::remove_cv_t<T>, std::string> ||
+    std::is_same_v<std::remove_cv_t<T>, std::string_view>;
+
+template <typename T>
+concept SupportedType = is_supported_type_v<T>;
+
+template <SupportedType T>
+std::expected<T, scan_error> parse_value(std::string_view input) {
+    if constexpr (std::is_same_v<std::remove_cv_t<T>, std::string> || 
+                    std::is_same_v<std::remove_cv_t<T>, std::string_view>) {
+        return T(input);
+    } else {
+        T value;
+        auto [ptr, ec] = std::from_chars(input.data(), input.data() + input.size(), value);
+        if (ec != std::errc()) {
+            return std::unexpected(scan_error{"Fail to parse value"});
+        }
+        return value;
+    }
+}
 
 // Функция для парсинга значения с учетом спецификатора формата
 template <typename T>
 std::expected<T, scan_error> parse_value_with_format(std::string_view input, std::string_view fmt) {
-    // здесь ваш код
+    if (fmt.empty()) {
+        return parse_value<T>(input);
+    }
+
+    if (fmt[0] != '%') {
+        return std::unexpected(scan_error{"Invalid format specifier"});
+    }
+
+    using BaseType = std::decay_t<T>;
+
+    char spec = fmt.size() > 1 ? fmt[1] : '\0';
+    
+    if constexpr (std::is_integral_v<BaseType>) {
+        if (std::is_signed_v<BaseType> && spec != 'd') {
+            return std::unexpected(scan_error{"Type or specifier mismatch: expected %d"});
+        }
+        if (!std::is_signed_v<BaseType> && spec != 'u') {
+            return std::unexpected(scan_error{"Type or specifier mismatch: expected %u"});
+        }
+    } else if constexpr (std::is_floating_point_v<BaseType>) {
+        if (spec != 'f') {
+            return std::unexpected(scan_error{"Type/specifier mismatch: expected %f"});
+        }
+    } else if constexpr (std::is_same_v<BaseType, std::string> || 
+                         std::is_same_v<BaseType, std::string_view>) {
+        if (spec != 's') {
+            return std::unexpected(scan_error{"Type/specifier mismatch: expected %s"});
+        }
+    }
+
+    return parse_value<T>(input);
 }
 
 // Функция для проверки корректности входных данных и выделения из обеих строк интересующих данных для парсинга
